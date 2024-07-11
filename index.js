@@ -1,33 +1,56 @@
 'use strict';
-
-const express = require('express');
-const path = require('path');
-const { createServer } = require('http');
-
 const WebSocket = require('ws');
 
-const app = express();
-app.use(express.static(path.join(__dirname, '/public')));
+// Dictionary to store connected clients in their respective rooms
+const rooms = {};
 
-const server = createServer(app);
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({ port: 8765 });
 
 wss.on('connection', function (ws) {
-  const id = setInterval(function () {
-    ws.send(JSON.stringify(process.memoryUsage()), function () {
-      //
-      // Ignore errors.
-      //
-    });
-  }, 100);
-  console.log('started client interval');
+  ws.on('message', async function (message) {
+    const room_id = message;
+    
+    // Create the room if it doesn't exist
+    if (!rooms[room_id]) {
+      rooms[room_id] = new Set();
+    }
 
-  ws.on('close', function () {
-    console.log('stopping client interval');
-    clearInterval(id);
+    // Add the client to the room
+    rooms[room_id].add(ws);
+    console.log(`Client joined room ${room_id}`);
+
+    try {
+      // Handle incoming messages from the client
+      ws.on('message', async function (message) {
+        // Broadcast the message to all clients in the room
+        for (let client of rooms[room_id]) {
+          if (client !== ws) { // Don't send the message back to the sender
+            client.send(message);
+            console.log(`Message broadcasted in room ${room_id}: ${message}`);
+          }
+        }
+      });
+
+      // Periodically send messages to the client (optional)
+      const intervalId = setInterval(function () {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(process.memoryUsage()), function () {
+            // Ignore errors
+          });
+        }
+      }, 100);
+
+      // Handle client disconnection
+      ws.on('close', function () {
+        console.log(`Client left room ${room_id}`);
+        rooms[room_id].delete(ws);
+        clearInterval(intervalId); // Stop sending messages on disconnect
+      });
+
+    } catch (error) {
+      console.error(`WebSocket error: ${error.message}`);
+    }
   });
 });
 
-server.listen(8080, function () {
-  console.log('Listening on http://0.0.0.0:8080');
-});
+console.log('WebSocket server is listening on ws://localhost:8765');
